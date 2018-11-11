@@ -689,13 +689,17 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 			switch(stage){
 				case S_CONNECTED:
 				case S_SCANED:
-				#warning "bug here?"
+				case S_RECOVERED:				
 				if(IsDeviceOffLine()){
-					HWND hwnd = FindWindow(TEXT("messagebox"),TEXT("Notice"));
+					/*close the messagebox if it's still exsit*/
+					HWND hwnd = NULL;					
+					if(stage == S_SCANED)
+						hwnd = FindWindow(TEXT("#32770"),TEXT("Scan notice"));
+					else if(stage == S_RECOVERED)
+						hwnd = FindWindow(TEXT("#32770"),TEXT("Recover notice"));
 					if(hwnd)
 						PostMessage(hwnd,WM_CLOSE,0,0);
-					else
-						MessageBox(hwndMain,"no messagebox found!","title",MB_OK);
+					/*jump back to S_INIT by normal mode*/
 					PostMessage(hwndMain,WM_INIT,0,0);
 				}
 				break;
@@ -795,7 +799,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 		SendMessage(hwndMain,WM_CTLENABLE,(1<<1)|(1<<2)|(1<<5),0);
 		
 		if(wParam == 0){/*normally entry*/
-			POP_MESSAGE(hwndMain,"Scan complete!","Notice");
+			POP_MESSAGE(hwndMain,"Scan complete!","Scan notice");
 		}		
 		break;
 		
@@ -815,13 +819,13 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 		/*jump to S_INIT*/
 		PostMessage(hwndMain,WM_INIT,1,0);
 		/*give users a pop message and then reboot target*/
-		POP_MESSAGE(hwndMain,"Recover complete! target will be rebooted.","Notice");
-		memset(command, 0, sizeof(struct Network_command));
-        command->command_id=COMMAND_REBOOT;                
-        int retval=windows_send_command(command);
-		if(retval < 0)					
-			ERROR_MESSAGE(hwndMain,"Reboot failed! error code is %s\nYou need reboot your device manually.",errcode2_string(retval));
-				
+		if(IDOK == POP_MESSAGE(hwndMain,"Recover complete! target will be rebooted.","Recover notice")){
+			memset(command, 0, sizeof(struct Network_command));
+			command->command_id=COMMAND_REBOOT;                
+			int retval=windows_send_command(command);
+			if(retval < 0)					
+				ERROR_MESSAGE(hwndMain,"Reboot failed! error code is %s\nYou need reboot your device manually.",errcode2_string(retval));
+		}	
 		break;
 		
 		case WM_ERROR:
@@ -897,7 +901,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 			ClearInfoBuff();
 			break;
 			default:
-				ERROR_MESSAGE(hwndMain,"%s:%s%d:Unkown error",__FILE__,__func__,__LINE__);
+				ERROR_MESSAGE(hwndMain,"%s:%s%d:Stage error",__FILE__,__func__,__LINE__);
 			break;
 		}		
 		break;
@@ -948,7 +952,7 @@ int APIENTRY WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,
 
 	/*check the files that we need is available? */
 	if(CheckUnitils())
-		return 1;
+		return 0;
 	
 	hInst = hInstance;
 	screenWidth = GetSystemMetrics(SM_CXSCREEN);
