@@ -459,7 +459,7 @@ rootfs:
 			if(bb_num_rootfs == 0)
 				AppendInfo("ROOTFS: No bad block!\n");
 			else
-				AppendInfo("ROOTFS: There's %u bad block(s), it will be in progress only if bad blocks great then 20!\n", 
+				AppendInfo("ROOTFS: There's %u bad block(s), it will be in progress only when bad blocks great then 20!\n", 
                             bb_num_rootfs);			
 			goto userdata;
 		}
@@ -512,7 +512,7 @@ userdata:
 			if(bb_num_userdata == 0)
 				AppendInfo("USERDATA: No bad block!\n");
 			else
-				AppendInfo("USERDATA: There's %u bad block(s), it will be in progress only if bad blocks great then 30!\n", 
+				AppendInfo("USERDATA: There's %u bad block(s), it will be in progress only when bad blocks great then 30!\n", 
 				bb_num_userdata);
 			goto EXIT;
 		}
@@ -584,6 +584,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 	HDC hdc;
 	static int scan_error_cnt = 0;	/*device online but scan failed times */
 	static int recover_error_cnt = 0;	/*device online but recover failed times*/
+	static int reboot_confirm = 0;
 	switch(message){
 		case WM_CREATE:
 		/*create the controller */
@@ -697,8 +698,10 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 						hwnd = FindWindow(TEXT("#32770"),TEXT("Scan notice"));
 					else if(stage == S_RECOVERED)
 						hwnd = FindWindow(TEXT("#32770"),TEXT("Recover notice"));
-					if(hwnd)
-						PostMessage(hwnd,WM_CLOSE,0,0);
+					if(hwnd){
+						if(stage == S_RECOVERED) reboot_confirm = 0;
+						PostMessage(hwnd,WM_COMMAND,IDABORT,0);
+					}
 					/*jump back to S_INIT by normal mode*/
 					PostMessage(hwndMain,WM_INIT,0,0);
 				}
@@ -794,13 +797,12 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 		/*restore some global variables*/
 		rootfs_recovered=0;	/*stand for rootfs option is recovered? */
 		userdata_recovered=0;	/*stand for userdata option is recovered? */
-		
-		/*enable recover button and rootfs,userdata partition,disable scan button*/
-		SendMessage(hwndMain,WM_CTLENABLE,(1<<1)|(1<<2)|(1<<5),0);
-		
+						
 		if(wParam == 0){/*normally entry*/
 			POP_MESSAGE(hwndMain,"Scan complete!","Scan notice");
-		}		
+		}
+		/*enable recover button and rootfs,userdata partition,disable scan button*/
+		SendMessage(hwndMain,WM_CTLENABLE,(1<<1)|(1<<2)|(1<<5),0);
 		break;
 		
 		case WM_RECOVERING:
@@ -816,16 +818,19 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 		case WM_RECOVERED:
 		assert(stage == S_RECOVERING);
 		stage = S_RECOVERED;
-		/*jump to S_INIT*/
-		PostMessage(hwndMain,WM_INIT,1,0);
-		/*give users a pop message and then reboot target*/
-		if(IDOK == POP_MESSAGE(hwndMain,"Recover complete! target will be rebooted.","Recover notice")){
+		
+		/*give users a pop-up message and then reboot target*/
+		reboot_confirm = 1;
+		POP_MESSAGE(hwndMain,"Recover complete! target will be rebooted.","Recover notice");
+		if(reboot_confirm){
 			memset(command, 0, sizeof(struct Network_command));
 			command->command_id=COMMAND_REBOOT;                
-			int retval=windows_send_command(command);
+			int retval=windows_send_command(command);			
 			if(retval < 0)					
 				ERROR_MESSAGE(hwndMain,"Reboot failed! error code is %s\nYou need reboot your device manually.",errcode2_string(retval));
-		}	
+		}
+		/*jump to S_INIT*/
+		PostMessage(hwndMain,WM_INIT,0,0);		
 		break;
 		
 		case WM_ERROR:
