@@ -7,6 +7,10 @@
 #include "UpgradeLib.h"
 #include "NandRecoveryTool.h"
 #include "error_code.h"
+/*CONNECT_SOLUTION: 1. use CheckOnlineStatus thread polling to check online status
+**					others. use WM_DEVICECHANGE and IsDeviceOffLine to check online status 
+*/
+#define CONNECT_SOLUTION	1
 
 #define NET_PORT 0x8989
 
@@ -55,6 +59,7 @@ SetWindowText(hInfo,lpszInformation);})
 #define WM_RECOVERED		(WM_USER+S_RECOVERED)
 #define WM_ERROR			(WM_USER+S_MAXSTAGE)
 #define WM_CTLENABLE		(WM_ERROR+1)
+#define WM_DISCONNECT		(WM_ERROR+2)
 
 /* controller layout definition 
 ** notice:	user controller's index can't modify directly
@@ -201,6 +206,32 @@ static inline int CheckUnitils(void)
 	}
 	return 0;
 }
+
+#if (CONNECT_SOLUTION == 1)
+static volatile int connection_alive = 0;
+DWORD WINAPI CheckOnlineStatus(LPVOID lpParameter)
+{
+	struct Network_command check_command;
+	while(1)
+	{
+		Sleep(10000);/*polling every 10 seconds */
+		memset(&check_command, 0, sizeof(struct Network_command));
+		check_command.command_id=CHECK_NETWORK_STATU;	
+		if(windows_send_command(&check_command)<0)
+			connection_alive = 0;
+		memset(&check_command, 0, sizeof(struct Network_command));
+		if(recv_from_server(&check_command) > 0 && check_command.command_id == CHECK_NETWORK_STATU_ACK)
+			connection_alive = 1;
+		else
+			connection_alive = 0;
+		/*did we need try it multiple times?*/
+		if(connection_alive == 0)
+			break;
+	}
+	if(hwndMain)
+		SendMessage(hwndMain,WM_DISCONNECT,0,0);
+}
+#else
 //check u3/u3_2nd device online status
 static int IsDeviceOffLine(void)
 {	
@@ -214,8 +245,7 @@ static int IsDeviceOffLine(void)
 		return 0;
 	return 1;
 }
-
-
+#endif
 DWORD WINAPI RebootTarget(LPVOID lpParameter)
 {
 	char  j, retval;	
@@ -332,7 +362,10 @@ EXIT:
 		ClearInfoBuff();
 		PostMessage(hwndMain,WM_ERROR,retval,0);
 	}
-	else{/*SUCCESS*/		
+	else{/*SUCCESS*/
+	#if (CONNECT_SOLUTION == 1)
+		CreateThread(NULL,0,CheckOnlineStatus,NULL,0,NULL);
+	#endif
 		PostMessage(hwndMain,WM_CONNECTED,0,0);
 	}
     return  (DWORD)retval;
@@ -348,7 +381,12 @@ DWORD WINAPI ScanDevice(LPVOID lpParameter)
 		ShowInfo("No partition selected.\n");
 		goto EXIT;
 	}
-	if(IsDeviceOffLine()){
+	#if(CONNECT_SOLUTION == 1)
+	if(connection_alive == 0)
+	#else
+	if(IsDeviceOffLine())
+	#endif
+	{
 		retval = ERROR_DEVICE_OFFLINE;
 		goto EXIT;
 	}	
@@ -438,7 +476,12 @@ DWORD WINAPI RecoverDevice(LPVOID lpParameter)
 		AppendInfo("No partition selected.\n");
 		goto EXIT;
 	}
-	if(IsDeviceOffLine()){
+	#if(CONNECT_SOLUTION == 1)
+	if(connection_alive == 0)
+	#else
+	if(IsDeviceOffLine())
+	#endif
+	{
 		retval = ERROR_DEVICE_OFFLINE;
 		goto EXIT;
 	}
@@ -685,13 +728,36 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 		hdc = BeginPaint(hwnd,&ps);		
 		EndPaint(hwnd,&ps);
 		break;
-		
+		#if (CONNECT_SOLUTION == 1)
+		case WM_DISCONNECT:
+		switch(stage){
+			HWND hwnd = NULL;
+			case WM_CONNECTED:
+			case WM_SCANED:
+			case WM_RECOVERED:									
+				if(stage == S_SCANED)
+					hwnd = FindWindow(TEXT("#32770"),TEXT("Scan notice"));
+				else if(stage == S_RECOVERED)
+					hwnd = FindWindow(TEXT("#32770"),TEXT("Recover notice"));
+				if(hwnd){
+					if(stage == S_RECOVERED) reboot_confirm = 0;
+					PostMessage(hwnd,WM_COMMAND,IDABORT,0);
+				}
+				/*jump back to S_INIT by normal mode*/
+				PostMessage(hwndMain,WM_INIT,0,0);
+			break;
+			default:
+			break;
+		}
+		break;
+		#else
 		case WM_DEVICECHANGE:
 			switch(stage){
 				case S_CONNECTED:
 				case S_SCANED:
 				case S_RECOVERED:				
-				if(IsDeviceOffLine()){
+				if(IsDeviceOffLine())
+				{
 					/*close the messagebox if it's still exsit*/
 					HWND hwnd = NULL;					
 					if(stage == S_SCANED)
@@ -710,6 +776,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 				break;
 			}
 		break;
+		#endif		
 		
 		case WM_INIT:				
 			if(0 == wParam){/*normally entry S_INIT*/			
@@ -856,7 +923,14 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 			AppendInfo("Technical information: %s\n",errcode2_string(wParam));
 			/*IsDeviceOffLine may block 25 seconds most,but return immediately if device removed,if connection not stable,
 			**it can be blocks long time,in this case,main window will sleep for x(max:25) seconds*/
-			if(wParam == ERROR_DEVICE_OFFLINE || IsDeviceOffLine()){	/*jump to S_INIT*/
+			if(wParam == ERROR_DEVICE_OFFLINE || 
+			#if(CONNECT_SOLUTION == 1)
+			(connection_alive == 0)
+			#else
+			(IsDeviceOffLine())
+			#endif
+			)
+			{	/*jump to S_INIT*/
 				ERROR_MESSAGE(hwndMain,"Can't detected target device! please check your device if's connect correctly, and push \"Scan\" button to start it over.");
 				PostMessage(hwndMain,WM_INIT,1,0);
 			}
@@ -883,7 +957,14 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 			/*judge if it's offline*/
 			AppendInfo("Technical information: %s\n",errcode2_string(wParam));
 			
-			if(wParam == ERROR_DEVICE_OFFLINE || IsDeviceOffLine()){	/*jump to S_INIT*/
+			if(wParam == ERROR_DEVICE_OFFLINE ||
+			#if(CONNECT_SOLUTION == 1)
+			(connection_alive == 0)
+			#else
+			(IsDeviceOffLine())
+			#endif
+			)
+			{	/*jump to S_INIT*/
 				ERROR_MESSAGE(hwndMain,"Can't detected target device! please check your device if's connect correctly, and push \"Scan\" button to start it over.");
 				PostMessage(hwndMain,WM_INIT,1,0);
 			}
@@ -910,6 +991,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 			break;
 		}		
 		break;
+		
 		
 		/*enable/disable user contoller */
 		case WM_CTLENABLE:
