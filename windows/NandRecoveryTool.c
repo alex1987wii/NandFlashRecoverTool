@@ -477,6 +477,8 @@ rootfs:
             Sleep(5000); 
             retval=recv_from_server(command);
             recover_bb_num=(unsigned int)command->data;
+			if(command->command_id != RECOVER_BB_ROOT_PATITION_ACK)
+				continue;
 			/*truncate the processing information */
 			lpszInformation[pos] = TEXT('\0');
             AppendInfo("ROOTFS: Recovered bad block(s): %u, processing: %2.2f%%\n", 
@@ -530,6 +532,8 @@ userdata:
             Sleep(5000); 
             retval=recv_from_server(command);
             recover_bb_num=(unsigned int)command->data;
+			if(command->command_id != RECOVER_BB_USER_PATITION_ACK)
+				continue;
 			/*truncate the processing information */
 			lpszInformation[pos] = TEXT('\0');
             AppendInfo("USERDATA: Recovered bad block(s): %u, processing: %2.2f%%\n", 
